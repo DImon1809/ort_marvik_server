@@ -18,6 +18,6 @@ export class IsValidPassword implements ValidatorConstraintInterface {
   }
 
   defaultMessage(validationArguments?: ValidationArguments): string {
-    return 'Неверно набранный пароль!';
+    return 'Пароли не совпадают!';
   }
 }

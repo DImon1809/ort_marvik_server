@@ -15,22 +15,25 @@ datasource db {
 
 model User{
   id String @id @default(auto()) @map("_id") @db.ObjectId
-  email String 
+  userName String
+  email String @unique
   password String
-  message Message[]
+  isBid Boolean
   token Token[]
 }
 
-model Message{
-  id String @id @default(auto()) @map("_id") @db.ObjectId
-  author User @relation(fields: [userId], references: [id])
-  userId String @db.ObjectId
-}
 
 model Token{
   id String @id @default(auto()) @map("_id") @db.ObjectId
   token String @unique
+  agent String
   expire DateTime
   owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   ownerId String @db.ObjectId
+}
+
+model BufferKeys{
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  email String @unique
+  key String
 }

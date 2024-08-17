@@ -12,6 +12,7 @@ import { join } from 'path';
 
 import { JwtAuthGuard } from './auth/strategy/jwt-auth-guard';
 import { APP_GUARD } from '@nestjs/core';
+import { BidModule } from './bid/bid.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { APP_GUARD } from '@nestjs/core';
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'client', 'build'),
     }),
+    BidModule,
   ],
   controllers: [],
   providers: [

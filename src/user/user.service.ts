@@ -32,8 +32,10 @@ export class UserService {
     return await this.prismaService.user
       .create({
         data: {
+          userName: dto.userName,
           email: dto.email,
           password: hashedPassword,
+          isBid: false,
         },
       })
       .catch((err) => {
@@ -44,16 +46,16 @@ export class UserService {
   }
 
   async find(idOrEmail: string) {
-    return await this.prismaService.user.findFirst({
+    return await this.prismaService.user.findUnique({
       where: {
         email: idOrEmail,
       },
     });
   }
 
-  async delete(id: string) {
+  async delete(email: string) {
     return await this.prismaService.user.delete({
-      where: { id },
+      where: { email },
     });
   }
 }
