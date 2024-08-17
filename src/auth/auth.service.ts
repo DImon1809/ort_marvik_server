@@ -9,7 +9,7 @@ import { UserService } from 'src/user/user.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
-import { User } from '@prisma/client';
+import { User, BufferKeys } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from 'src/prisma/prisma.service';
 
@@ -19,8 +19,9 @@ import { add } from 'date-fns';
 import { compareSync } from 'bcrypt';
 import { ITokens } from 'src/types/tokens';
 
-import * as nodeMailer from 'nodemailer';
-import { patternMessage } from 'src/patterns/pattern-message';
+import { sendMail } from 'src/nodemailer/send-mail';
+import { ConfigService } from '@nestjs/config';
+import { CodeDataConfirmDto } from './dto/code-data.dto';
 
 @Injectable()
 export class AuthService {
@@ -30,28 +31,54 @@ export class AuthService {
     private readonly prismaService: PrismaService,
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
   ) {}
 
   public async register(dto: RegisterDto) {
-    const checkUser = await this.userService.find(dto.email).catch((err) => {
-      this.logger.error(err);
+    const checkUser: Partial<User> = await this.userService
+      .find(dto.email)
+      .catch((err) => {
+        this.logger.error(err);
 
-      return null;
-    });
+        return null;
+      });
 
     if (checkUser) throw new ConflictException('Пользователь уже существует!');
 
-    // await this.sendMail(dto.email, 'Завершить регистрацию');
+    const bufferKeys: Partial<BufferKeys> = await this.writeCode(dto.email);
 
-    return await this.userService.save(dto);
+    if (bufferKeys) {
+      sendMail(
+        true,
+        dto.email,
+        dto.userName,
+        this.configService.get('EMAIL_PASS'),
+        bufferKeys.code,
+      );
+
+      return 'Проверьте почту!';
+    }
+  }
+
+  public async confirmCode(codeData: CodeDataConfirmDto) {
+    const currentCode = await this.prismaService.bufferKeys.findFirst({
+      where: { email: codeData.email },
+    });
+
+    if (currentCode.code.split(' ').join('') !== codeData.code) return false;
+
+    await this.prismaService.bufferKeys
+      .delete({ where: { email: codeData.email } })
+      .catch((err) => {
+        this.logger.error(err);
+
+        return null;
+      });
+
+    return await this.userService.save(codeData);
   }
 
   public async login(dto: LoginDto, agent: string): Promise<ITokens> {
-    // : Promise<{
-    //   user: Partial<User>;
-    //   tokens: ITokens;
-    // }> {
-
     const currentUser: Partial<User> = await this.userService
       .find(dto.email)
       .catch((err) => {
@@ -70,15 +97,6 @@ export class AuthService {
 
       return null;
     });
-
-    // return {
-    //   user: {
-    //     userName,
-    //     email,
-    //     isBid,
-    //   },
-    //   tokens,
-    // };
 
     return tokens;
   }
@@ -118,6 +136,41 @@ export class AuthService {
     return await this.userService.delete(email);
   }
 
+  private generateCode(): string {
+    let code = [];
+
+    for (let i = 0; i < 6; i++) {
+      code[i] = `${Math.ceil(Math.random() * 10) - 1} `;
+    }
+
+    return code.join('');
+  }
+
+  public async writeCode(email: string) {
+    const code = await this.prismaService.bufferKeys.findFirst({
+      where: { email: email },
+    });
+
+    if (!code)
+      return await this.prismaService.bufferKeys.create({
+        data: {
+          email,
+          code: this.generateCode(),
+        },
+      });
+
+    if (code)
+      return await this.prismaService.bufferKeys.update({
+        where: {
+          email,
+        },
+
+        data: {
+          code: this.generateCode(),
+        },
+      });
+  }
+
   public async deleteRefreshToken(refreshtoken: string, agent: string) {
     await this.prismaService.token
       .delete({ where: { token: refreshtoken, agent } })
@@ -134,26 +187,38 @@ export class AuthService {
     });
 
     if (!token)
-      return await this.prismaService.token.create({
-        data: {
-          token: v4(),
-          expire: add(new Date(), { months: 1 }),
-          agent,
-          ownerId,
-        },
-      });
+      return await this.prismaService.token
+        .create({
+          data: {
+            token: v4(),
+            expire: add(new Date(), { months: 1 }),
+            agent,
+            ownerId,
+          },
+        })
+        .catch((err) => {
+          this.logger.error(err);
+
+          return null;
+        });
 
     if (token)
-      return await this.prismaService.token.update({
-        where: {
-          id: token.id,
-        },
+      return await this.prismaService.token
+        .update({
+          where: {
+            id: token.id,
+          },
 
-        data: {
-          token: v4(),
-          expire: add(new Date(), { months: 1 }),
-        },
-      });
+          data: {
+            token: v4(),
+            expire: add(new Date(), { months: 1 }),
+          },
+        })
+        .catch((err) => {
+          this.logger.error(err);
+
+          return null;
+        });
   }
 
   private async generateTokens(
@@ -169,29 +234,5 @@ export class AuthService {
     const refreshToken = await this.genRefreshToken(id, agent);
 
     return { accessToken, refreshToken };
-  }
-
-  private async sendMail(email: string, subject: string) {
-    const transporter = nodeMailer.createTransport(
-      {
-        host: 'smtp.mail.ru',
-        port: 465,
-        secure: true,
-        auth: {
-          user: 'ort.marvic@yandex.ru',
-          pass: '32119',
-        },
-      },
-      {
-        from: 'Не требует ответа. Сообщение от <ort.marvic@yandex.ru>',
-      },
-    );
-
-    const mailer = (message: { to: string; subject: string; html: string }) =>
-      transporter.sendMail(message, (err) => {
-        if (err) this.logger.error(err);
-      });
-
-    mailer(patternMessage(email, subject));
   }
 }

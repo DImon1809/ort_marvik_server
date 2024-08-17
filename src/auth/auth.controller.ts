@@ -11,6 +11,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -24,19 +25,57 @@ const REFRESH_TOKEN = 'refreshtoken';
 
 import { Public } from 'src/decorators/public.decorator';
 
-import { User } from '@prisma/client';
-
 import { UserAgent } from 'src/decorators/agent.decorator';
 import { ReqUserDto } from './dto/req-user.dto';
+import { CodeDataDto, CodeDataConfirmDto } from './dto/code-data.dto';
+
+import { sendMail } from 'src/nodemailer/send-mail';
+import { ConfigService } from '@nestjs/config';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Public()
   @Post('register')
-  async registerUser(@Body() dto: RegisterDto) {
-    return await this.authService.register(dto);
+  async registerUser(@Body() dto: RegisterDto, @Res() res: Response) {
+    const message = await this.authService.register(dto);
+
+    res.status(HttpStatus.ACCEPTED).json({ message });
+  }
+
+  @Public()
+  @Post('repeat')
+  async repeateCode(@Body() codeData: CodeDataDto, @Res() res: Response) {
+    const { code } = await this.authService.writeCode(codeData.email);
+
+    if (!code) throw new ForbiddenException('Невозможно получить код!');
+
+    await sendMail(
+      true,
+      codeData.email,
+      codeData.userName,
+      this.configService.get('EMAIL_PASS'),
+      code,
+    );
+
+    res.status(HttpStatus.ACCEPTED).json({ message: 'Код сгенерирован!' });
+  }
+
+  @Public()
+  @Post('/code')
+  async confirmCode(
+    @Body() codeData: CodeDataConfirmDto,
+    @Res() res: Response,
+  ) {
+    const message = await this.authService.confirmCode(codeData);
+
+    if (!message) throw new ForbiddenException('Неверный код!');
+
+    res.status(HttpStatus.CREATED).json(message);
   }
 
   @Public()
@@ -107,7 +146,7 @@ export class AuthController {
       httpOnly: true,
       sameSite: 'lax',
       expires: new Date(tokens.refreshToken.expire),
-      secure: false,
+      secure: true,
       path: '/',
     });
 
